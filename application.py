@@ -36,7 +36,7 @@ app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
-# Configure CS50 Library to use SQLite database
+# Configure CS50 Library to use Postgres or SQLite database
 db = SQL(os.environ.get("postgres://aiermdeoiflutx:a1a97c3761510c869b2746750f37d4c3bb7ceb95da155c37c8351bfd833c6395@ec2-174-129-227-205.compute-1.amazonaws.com:5432/ddkntg4bodjrp2") or "sqlite:///finance.db")
 
 @app.route("/")
@@ -370,7 +370,3 @@ def errorhandler(e):
 # Listen for errors
 for code in default_exceptions:
     app.errorhandler(code)(errorhandler)
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
