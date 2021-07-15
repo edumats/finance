@@ -36,8 +36,9 @@ app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
-# Configure CS50 Library to use Postgres or SQLite database
-db = SQL(os.environ.get("postgres://aiermdeoiflutx:a1a97c3761510c869b2746750f37d4c3bb7ceb95da155c37c8351bfd833c6395@ec2-174-129-227-205.compute-1.amazonaws.com:5432/ddkntg4bodjrp2") or "sqlite:///finance.db")
+# Configure CS50 Library to use Postgres database
+db = SQL(os.environ.get("DATABASE_URL").replace("://", "ql://", 1))
+
 
 @app.route("/")
 @login_required
