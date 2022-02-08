@@ -58,7 +58,7 @@ def index():
 
     """ Requests all shares from current user """
     portfolio = db.execute(
-        "SELECT symbol, price, SUM(quantity) AS quantity FROM portfolio WHERE username=:username GROUP BY symbol HAVING SUM(quantity) > 0", username=session["user_id"])
+        "SELECT symbol, price, SUM(quantity) AS quantity FROM portfolio WHERE username=:username::varchar GROUP BY symbol HAVING SUM(quantity) > 0", username=session["user_id"])
     if not portfolio:
         return render_template("index.html", totalCash=usd(totalCash), grandTotal=usd(totalCash))
 
