@@ -1,10 +1,10 @@
-import os
 import requests
 import urllib.parse
 
-from flask import redirect, render_template, session
+from flask import redirect, render_template, session, flash
 from functools import wraps
 
+from env import API_KEY
 
 def apology(message, code=400):
     """Render message as an apology to user."""
@@ -44,21 +44,25 @@ def lookup(symbol):
 
     # Contact API
     try:
-        api_key = os.environ.get("API_KEY")
-        response = requests.get(f"https://cloud.iexapis.com/stable/stock/{urllib.parse.quote_plus(symbol)}/quote?token={api_key}")
+        api_key = API_KEY
+        response = requests.get(f"https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={urllib.parse.quote_plus(symbol)}&apikey={api_key}")
         response.raise_for_status()
-    except requests.RequestException:
+    except requests.RequestException as e:
+        flash(f"Error getting data from API: {e}", "error")
+        print(f"Error getting data from API: {e}")
         return None
 
     # Parse response
     try:
         quote = response.json()
         return {
-            "name": quote["companyName"],
-            "price": float(quote["latestPrice"]),
-            "symbol": quote["symbol"]
+            "name": quote["Global Quote"]["01. symbol"],
+            "price": float(quote["Global Quote"]["05. price"]),
+            "symbol": quote["Global Quote"]["01. symbol"]
         }
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError) as e:
+        flash(f"Error parsing data from API: {e}", "error")
+        print(f"Error parsing data from API: {e}")
         return None
 
 

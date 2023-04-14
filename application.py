@@ -1,15 +1,14 @@
-import os
-
 from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_session import Session
 from tempfile import mkdtemp
 from werkzeug.exceptions import default_exceptions, HTTPException, InternalServerError
 from werkzeug.security import check_password_hash, generate_password_hash
-from cs50 import SQL
-from dotenv import load_dotenv
+from flask_sqlalchemy import SQLAlchemy
 
 from helpers import apology, login_required, lookup, usd
 import datetime
+
+from env import DATABASE_URL
 
 # Configure application
 app = Flask(__name__)
@@ -35,16 +34,9 @@ app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
-# Load environment variables from .env file
-load_dotenv()
+app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-
-if not DATABASE_URL:
-    raise ValueError('Please set environmental variable DATABASE_URL in .env')
-
-# Configure CS50 SQL library to use MySQL
-db = SQL(DATABASE_URL)
+db = SQLAlchemy(app)
 
 @app.route("/")
 @login_required
@@ -52,13 +44,15 @@ def index():
     """Show portfolio of stocks"""
 
     """ Requests total cash from current user """
-    total = db.execute(
+    total = db.session.execute(
         "SELECT cash FROM users WHERE id=:id",
-        id=session["user_id"]
+        {"id": session["user_id"]}
     )
+    total = list(total)
+
     if not total:
         return apology("Error retrieving total cash", 400)
-
+    total = list(total)
     # User total cash
     totalCash = total[0]['cash']
 
@@ -66,14 +60,16 @@ def index():
     totalStock = 0
 
     """ Requests all shares from current user """
-    portfolio = db.execute(
+    portfolio = db.session.execute(
         "SELECT symbol, SUM(quantity) AS quantity "
         "FROM portfolio "
-        "WHERE username=:username::varchar "
+        "WHERE user_id=:username "
         "GROUP BY symbol "
         "HAVING SUM(quantity) > 0",
-        username=session["user_id"]
+        {"username": session["user_id"]}
     )
+
+    portfolio = list(portfolio)
 
     if not portfolio:
         return render_template(
@@ -86,11 +82,16 @@ def index():
     Iterates over portfolio list of dicts
     Adds current price, name and stock total value
     """
+    result = []
     for stock in portfolio:
         quote = lookup(stock["symbol"])
-        stock['currentPrice'] = usd(quote['price'])
-        stock['name'] = quote['name']
-        stock['total'] = usd(quote['price'] * stock['quantity'])
+        result.append(
+            {
+                "currentPrice": usd(quote['price']),
+                "name": quote['name'],
+                "total": usd(quote['price'] * stock['quantity']),
+            }
+        )
         totalStock += quote['price'] * stock['quantity']
 
     grandTotal = totalCash + totalStock
@@ -98,7 +99,7 @@ def index():
     return render_template(
         "index.html",
         totalCash=usd(totalCash),
-        portfolio=portfolio,
+        portfolio=result,
         totalStock=usd(totalStock),
         grandTotal=usd(grandTotal)
     )
@@ -119,7 +120,7 @@ def buy():
         # Quantity of stocks requested by user
         try:
             quantity = int(request.form.get("shares"))
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError):
             return apology("must be a valid number", 400)
 
         # Checks if provided quantity is an integer and positive
@@ -130,10 +131,12 @@ def buy():
         total = quote["price"] * quantity
 
         # Returns user's total cash
-        rows = db.execute(
+        rows = db.session.execute(
             "SELECT cash FROM users WHERE id=:id",
-            id=session["user_id"]
+            {"id": session["user_id"]}
         )
+
+        rows = list(rows)
 
         # Returns apology if total purchase is greater than available cash
         if not rows[0]["cash"] >= total:
@@ -143,23 +146,24 @@ def buy():
         now = datetime.datetime.now()
 
         # Insert to portfolio table data about purchase
-        purchase = db.execute(
-            "INSERT INTO portfolio(username, symbol, price, quantity, date) "
+        db.session.execute(
+            "INSERT INTO portfolio(user_id, symbol, price, quantity, date) "
             "VALUES(:username, :symbol, :price, :quantity, :date)",
-            username=session["user_id"],
-            symbol=quote["symbol"],
-            price=quote["price"],
-            quantity=quantity,
-            date=now
+            {
+                "username": session["user_id"],
+                "symbol": quote["symbol"],
+                "price": quote["price"],
+                "quantity": quantity,
+                "date": now,
+            }
         )
 
         # Updates user's cash after purchase
-        update = db.execute(
+        db.session.execute(
             "UPDATE users "
             "SET cash = cash - :total "
             "WHERE id=:id",
-            total=total,
-            id=session["user_id"]
+            {"total": total, "id": session["user_id"]}
         )
         flash(
             f"{quote['name']} bought for the unit price of {usd(quote['price'])}. Paid {usd(total)}"
@@ -175,7 +179,12 @@ def check():
     if request.method == 'GET':
         username = request.args.get('username')
         # Query database for username
-        query = db.execute('SELECT username FROM users WHERE username = :username', username=username)
+        query = db.session.execute(
+            'SELECT username FROM users WHERE username = :username',
+            {"username": username}
+        )
+
+        query = list(query)
 
         # If username is lenght > 1 and does not contain in users database, return true; otherwise, false
         if len(username) > 1 and not query:
@@ -188,7 +197,7 @@ def check():
 @login_required
 def history():
     """Show history of transactions"""
-    history = db.execute(
+    history = db.session.execute(
         "SELECT symbol, price, quantity, date, "
         "CASE WHEN quantity > 0 "
         "THEN 'BUY' "
@@ -196,18 +205,22 @@ def history():
         "THEN 'SELL' "
         "END status "
         "FROM portfolio "
-        "WHERE username=:username::varchar",
-        username=session["user_id"]
+        "WHERE user_id=:username ",
+        {"username": session["user_id"]}
     )
 
+    result = []
     """ Interates over history list of dicts """
     for stock in history:
-        quote = lookup(stock["symbol"])
-        stock["name"] = quote["name"]
-        stock["price"] = usd(stock["price"])
-        stock["date"] = stock["date"].strftime("%d/%m/%Y")
+        result.append(
+            {
+                "name": stock["symbol"],
+                "price": usd(stock["price"]),
+                "date": stock["date"].strftime("%d/%m/%Y"),
+            }
+        )
 
-    return render_template("history.html", history=history)
+    return render_template("history.html", history=result)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -229,8 +242,12 @@ def login():
             return apology("must provide password", 403)
 
         # Query database for username
-        rows = db.execute("SELECT * FROM users WHERE username = :username",
-                          username=request.form.get("username"))
+        rows = db.session.execute(
+            "SELECT * FROM users WHERE username = :username",
+            {"username": request.form.get("username")}
+        )
+
+        rows = list(rows)
 
         # Ensure username exists and password is correct
         if len(rows) != 1 or not check_password_hash(rows[0]["hash"], request.form.get("password")):
@@ -267,7 +284,7 @@ def quote():
 
         if quote:
             return render_template(
-                "quoted.html", 
+                "quoted.html",
                 name=quote["name"],
                 symbol=quote["symbol"],
                 price=usd(quote["price"])
@@ -300,21 +317,26 @@ def register():
         if request.form.get("password") != request.form.get("confirmation"):
             return apology("passwords do not match", 400)
 
-        user = db.execute(
+        user = db.session.execute(
             'SELECT username FROM users WHERE username=:username',
-            username=request.form.get("username")
+            {"username": request.form.get("username")}
         )
+        user = list(user)
+
         if user:
             return apology('user already exists', 400)
 
         hash = generate_password_hash(request.form.get("password"))
 
         # Query database for username
-        result = db.execute(
+        result = db.session.execute(
             "INSERT INTO users(username, hash) VALUES(:username, :hash)",
-            username=request.form.get("username"),
-            hash=hash
+            {
+                "username": request.form.get("username"),
+                "hash": hash,
+            }
         )
+        result = list(result)
         if not result:
             return apology("user already exists", 200)
 
@@ -345,7 +367,7 @@ def sell():
         # Quantity of stocks requested by user
         try:
             quantity = int(request.form.get("shares"))
-        except (ValueError, TypeError) as e:
+        except (ValueError, TypeError):
             return apology("must be a valid number", 400)
 
         # Checks if provided quantity is positive
@@ -353,13 +375,13 @@ def sell():
             return apology("must be a positive number", 400)
 
         # Returns total number of shares of selected stock
-        available = db.execute(
+        available = db.session.execute(
             "SELECT SUM(quantity) AS quantity "
             "FROM portfolio "
-            "WHERE username=:username::varchar AND symbol=:symbol",
-            username=session['user_id'],
-            symbol=symbol
+            "WHERE user_id=:username AND symbol=:symbol",
+            {"username": session['user_id'], "symbol": symbol}
         )
+        available = list(available)
         # Checks if stock exists in portfolio and in sufficient qty
         if not available:
             # flash("No stocks available")
@@ -379,19 +401,28 @@ def sell():
         now = datetime.datetime.now()
 
         # Insert to portfolio table data about the selling
-        sell = db.execute(
-            "INSERT INTO portfolio(username, symbol, price, quantity, date) VALUES(:username, :symbol, :price, :quantity, :date)",
-            username=session["user_id"],
-            symbol=quote["symbol"],
-            price=quote["price"],
-            quantity=-quantity,
-            date=now
+        db.session.execute(
+            "INSERT INTO portfolio(user_id, symbol, price, quantity, date) "
+            "VALUES(:username, :symbol, :price, :quantity, :date)",
+            {
+                "username": session["user_id"],
+                "symbol": quote["symbol"],
+                "price": quote["price"],
+                "quantity": -quantity,
+                "date": now,
+            }
         )
 
         soldTotal = quote['price'] * quantity
 
         # Updates user's wallet
-        update = db.execute("UPDATE users SET cash = cash + :soldTotal WHERE id=:id", soldTotal=soldTotal, id=session["user_id"])
+        db.session.execute(
+            "UPDATE users SET cash = cash + :soldTotal WHERE id=:id",
+            {
+                "soldTotal": soldTotal,
+                "id": session["user_id"],
+            }
+        )
 
         # Message to user
         flash(f"{quote['name']} sold for the unit price of ${quote['price']}. Received ${soldTotal}")
@@ -400,15 +431,15 @@ def sell():
         # Users get by a GET request
 
         # Query to search for all stock symbols from given user that have qty > 0
-        options = db.execute(
+        options = db.session.execute(
             "SELECT symbol, SUM(quantity) AS sum_total "
             "FROM portfolio "
-            "WHERE username=:username::varchar "
+            "WHERE user_id=:username "
             "GROUP BY symbol "
             "HAVING SUM(quantity) > 0",
-            username=session["user_id"]
+            {"username": session["user_id"]}
         )
-        return render_template("sell.html", options=options)
+        return render_template("sell.html", options=list(options))
 
 
 @app.route("/settings", methods=["GET", "POST"])
@@ -427,10 +458,12 @@ def settings():
             return redirect("/settings")
 
         # Query database
-        rows = db.execute(
+        rows = db.session.execute(
             "SELECT * FROM users WHERE id = :id",
-            id=session["user_id"]
+            {"id": session["user_id"]}
         )
+
+        rows = list(rows)
 
         # Ensure username exists and password is correct
         if len(rows) != 1 or not check_password_hash(rows[0]["hash"], request.form.get("password")):
@@ -440,11 +473,11 @@ def settings():
         hash = generate_password_hash(request.form.get("password_new"))
 
         # Update password
-        update = db.execute(
+        update = db.session.execute(
             'UPDATE users SET hash = :hash WHERE id = :id',
-            hash=hash,
-            id=session["user_id"]
+            {"hash": hash, "id": session["user_id"]}
         )
+        update = list(update)
         if update:
             # Redirect user to home page
             flash("Password have successfully changed")
