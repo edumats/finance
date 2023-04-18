@@ -1,3 +1,5 @@
+import decimal
+
 from flask import Flask, flash, jsonify, redirect, render_template, request, session, url_for
 from flask_session import Session
 from tempfile import mkdtemp
@@ -36,7 +38,7 @@ app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-# To avoid using closed connections
+# Using pool_recycle to avoid using closed connections
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle' : 280}
 
 db = SQLAlchemy(app)
@@ -58,7 +60,7 @@ def index():
         return apology("Error retrieving total cash", 400)
     
 
-    # User total cash
+    # User total cash returned as Decimal type
     totalCash = cash['cash']
 
     # User total stock value

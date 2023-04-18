@@ -1,3 +1,4 @@
+import decimal
 import requests
 import urllib.parse
 
@@ -57,7 +58,7 @@ def lookup(symbol):
         quote = response.json()
         return {
             "name": quote["Global Quote"]["01. symbol"],
-            "price": float(quote["Global Quote"]["05. price"]),
+            "price": decimal.Decimal(quote["Global Quote"]["05. price"]),
             "symbol": quote["Global Quote"]["01. symbol"]
         }
     except (KeyError, TypeError, ValueError) as e:
