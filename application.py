@@ -4,6 +4,7 @@ from tempfile import mkdtemp
 from werkzeug.exceptions import default_exceptions, HTTPException, InternalServerError
 from werkzeug.security import check_password_hash, generate_password_hash
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.exc import IntegrityError
 
 from helpers import apology, login_required, lookup, usd
 import datetime
@@ -35,6 +36,8 @@ app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
+# To avoid using closed connections
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_recycle' : 280}
 
 db = SQLAlchemy(app)
 
@@ -43,25 +46,27 @@ db = SQLAlchemy(app)
 def index():
     """Show portfolio of stocks"""
 
-    """ Requests total cash from current user """
+    # Requests total cash from current user
     total = db.session.execute(
         "SELECT cash FROM users WHERE id=:id",
         {"id": session["user_id"]}
     )
-    total = list(total)
+    cash = total.fetchone()
 
-    if not total:
+    # If no user was found, return error
+    if cash is None:
         return apology("Error retrieving total cash", 400)
-    total = list(total)
+    
+
     # User total cash
-    totalCash = total[0]['cash']
+    totalCash = cash['cash']
 
     # User total stock value
     totalStock = 0
 
     """ Requests all shares from current user """
     portfolio = db.session.execute(
-        "SELECT symbol, SUM(quantity) AS quantity "
+        "SELECT symbol, CAST(SUM(quantity) AS SIGNED INTEGER) AS quantity "
         "FROM portfolio "
         "WHERE user_id=:username "
         "GROUP BY symbol "
@@ -69,7 +74,7 @@ def index():
         {"username": session["user_id"]}
     )
 
-    portfolio = list(portfolio)
+    portfolio = portfolio.fetchall()
 
     if not portfolio:
         return render_template(
@@ -117,13 +122,13 @@ def buy():
         if not quote:
             return apology("incorrect stock name", 400)
 
-        # Quantity of stocks requested by user
+        # Check if quantity of stocks requested by user is integer
         try:
             quantity = int(request.form.get("shares"))
         except (ValueError, TypeError):
             return apology("must be a valid number", 400)
 
-        # Checks if provided quantity is an integer and positive
+        # Checks if provided quantity is not positive or zero
         if quantity <= 0:
             return apology("must be a positive number", 400)
 
@@ -136,10 +141,10 @@ def buy():
             {"id": session["user_id"]}
         )
 
-        rows = list(rows)
+        rows = rows.fetchone()
 
         # Returns apology if total purchase is greater than available cash
-        if not rows[0]["cash"] >= total:
+        if not rows["cash"] >= total:
             return apology("insufficient funds", 403)
 
         # Current time and date
@@ -232,29 +237,31 @@ def login():
 
     # User reached route via POST (as by submitting a form via POST)
     if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
 
         # Ensure username was submitted
-        if not request.form.get("username"):
+        if not username:
             return apology("must provide username", 403)
 
         # Ensure password was submitted
-        elif not request.form.get("password"):
+        elif not password:
             return apology("must provide password", 403)
 
         # Query database for username
         rows = db.session.execute(
             "SELECT * FROM users WHERE username = :username",
-            {"username": request.form.get("username")}
+            {"username": username}
         )
 
-        rows = list(rows)
+        rows = rows.fetchone()
 
         # Ensure username exists and password is correct
-        if len(rows) != 1 or not check_password_hash(rows[0]["hash"], request.form.get("password")):
+        if rows is None or not check_password_hash(rows["hash"], password):
             return apology("invalid username and/or password", 403)
 
         # Remember which user has logged in
-        session["user_id"] = rows[0]["id"]
+        session["user_id"] = rows["id"]
 
         # Redirect user to home page
         return redirect("/")
@@ -305,43 +312,45 @@ def register():
 
     # User reached route via POST (as by submitting a form via POST)
     if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
 
         # Ensure username was submitted
-        if not request.form.get("username"):
+        if not username:
             return apology("must provide username", 400)
 
         # Ensure password was submitted
-        if not request.form.get("password"):
+        if not password:
             return apology("must provide password", 400)
 
-        if request.form.get("password") != request.form.get("confirmation"):
+        if password != request.form.get("confirmation"):
             return apology("passwords do not match", 400)
 
+        # Check if user already exists
         user = db.session.execute(
             'SELECT username FROM users WHERE username=:username',
-            {"username": request.form.get("username")}
+            {"username": username}
         )
-        user = list(user)
+        row = user.fetchone()
 
-        if user:
+        if row is not None:
             return apology('user already exists', 400)
 
-        hash = generate_password_hash(request.form.get("password"))
+        hash = generate_password_hash(password)
 
         # Query database for username
         result = db.session.execute(
             "INSERT INTO users(username, hash) VALUES(:username, :hash)",
             {
-                "username": request.form.get("username"),
+                "username": username,
                 "hash": hash,
             }
         )
-        result = list(result)
-        if not result:
-            return apology("user already exists", 200)
+        db.session.commit()
 
         # Stores id returned by INSERT
-        session["user_id"] = result
+        session["user_id"] = result.lastrowid
+        print(f'Session id: {session["user_id"]}')
 
         # Redirect user to home page
         flash("Registration successful")
@@ -376,7 +385,7 @@ def sell():
 
         # Returns total number of shares of selected stock
         available = db.session.execute(
-            "SELECT SUM(quantity) AS quantity "
+            "SELECT CAST(SUM(quantity) AS SIGNED INTEGER) AS quantity "
             "FROM portfolio "
             "WHERE user_id=:username AND symbol=:symbol",
             {"username": session['user_id'], "symbol": symbol}
@@ -432,7 +441,7 @@ def sell():
 
         # Query to search for all stock symbols from given user that have qty > 0
         options = db.session.execute(
-            "SELECT symbol, SUM(quantity) AS sum_total "
+            "SELECT symbol, CAST(SUM(quantity) AS SIGNED INTEGER) AS sum_total "
             "FROM portfolio "
             "WHERE user_id=:username "
             "GROUP BY symbol "
@@ -454,7 +463,7 @@ def settings():
 
         password_new = request.form.get("password_new")
         if not password_new:
-            flash('You must provide the new password')
+            flash('You must provide a new password')
             return redirect("/settings")
 
         # Query database
@@ -463,28 +472,32 @@ def settings():
             {"id": session["user_id"]}
         )
 
-        rows = list(rows)
+        rows = rows.fetchone()
 
         # Ensure username exists and password is correct
-        if len(rows) != 1 or not check_password_hash(rows[0]["hash"], request.form.get("password")):
+        if rows is None or not check_password_hash(rows[0]["hash"], request.form.get("password")):
             return apology("invalid password", 403)
 
         # Hash new password
         hash = generate_password_hash(request.form.get("password_new"))
 
         # Update password
-        update = db.session.execute(
-            'UPDATE users SET hash = :hash WHERE id = :id',
-            {"hash": hash, "id": session["user_id"]}
-        )
-        update = list(update)
-        if update:
-            # Redirect user to home page
-            flash("Password have successfully changed")
-            return redirect(url_for('index.html'))
-        else:
+        try:
+            db.session.execute(
+                'UPDATE users SET hash = :hash WHERE id = :id',
+                {"hash": hash, "id": session["user_id"]}
+            )
+            db.session.commit()
+            
+        except IntegrityError:
+            db.session.rollback()
             flash("Error updating password")
             return redirect(url_for('index.html'))
+
+        # Update was successful
+        flash("Password update successful")
+        return redirect(url_for('index.html'))
+            
     else:
         return render_template('settings.html')
 
