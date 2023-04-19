@@ -1,11 +1,34 @@
 import decimal
 import requests
 import urllib.parse
+import time
 
 from flask import redirect, render_template, session, flash
 from functools import wraps
 
 from env import API_KEY
+
+# Rate-limiter function for circumventing API rate limitation
+def rate_limited(max_per_minute):
+    """
+    Decorator function to limit API requests per minute.
+    """
+    min_interval = 60.0 / float(max_per_minute)
+    last_time_called = [0.0]
+
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            elapsed = time.clock() - last_time_called[0]
+            left_to_wait = min_interval - elapsed
+            if left_to_wait > 0:
+                time.sleep(left_to_wait)
+            result = func(*args, **kwargs)
+            last_time_called[0] = time.clock()
+            return result
+
+        return wrapper
+
+    return decorator
 
 def apology(message, code=400):
     """Render message as an apology to user."""
@@ -62,7 +85,6 @@ def lookup(symbol):
             "symbol": quote["Global Quote"]["01. symbol"]
         }
     except (KeyError, TypeError, ValueError) as e:
-        flash(f"Error parsing data from API: {e}", "error")
         print(f"Error parsing data from API: {e}")
         return None
 

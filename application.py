@@ -117,13 +117,6 @@ def index():
 def buy():
     """Buy shares of stock"""
     if request.method == "POST":
-        # Get stock quote
-        quote = lookup(request.form.get("symbol"))
-
-        # if invalid stock name is provided, return apology
-        if not quote:
-            return apology("incorrect stock name", 400)
-
         # Check if quantity of stocks requested by user is integer
         try:
             quantity = int(request.form.get("shares"))
@@ -133,6 +126,13 @@ def buy():
         # Checks if provided quantity is not positive or zero
         if quantity <= 0:
             return apology("must be a positive number", 400)
+
+        # Get stock quote
+        quote = lookup(request.form.get("symbol"))
+
+        # if invalid stock name is provided, return apology
+        if not quote:
+            return apology("incorrect stock name", 400)
 
         # Variable for total purchase value
         total = quote["price"] * quantity
@@ -172,6 +172,7 @@ def buy():
             "WHERE id=:id",
             {"total": total, "id": session["user_id"]}
         )
+        db.session.commit()
         flash(
             f"{quote['name']} bought for the unit price of {usd(quote['price'])}. Paid {usd(total)}"
         )
@@ -391,8 +392,8 @@ def sell():
             "FROM portfolio "
             "WHERE user_id=:username AND symbol=:symbol",
             {"username": session['user_id'], "symbol": symbol}
-        )
-        available = list(available)
+        ).first()
+
         # Checks if stock exists in portfolio and in sufficient qty
         if not available:
             # flash("No stocks available")
@@ -400,7 +401,7 @@ def sell():
             return apology("No stocks available", 400)
 
         # Checks if quantity of shares to be sold does not exceed quantity in possession
-        if quantity > available[0]['quantity']:
+        if quantity > available['quantity']:
             # flash('Insuficient stock quantity')
             # return redirect("/sell")
             return apology("Insuficient stock quantity", 400)
@@ -434,6 +435,9 @@ def sell():
                 "id": session["user_id"],
             }
         )
+
+        # Commit changes to database
+        db.session.commit()
 
         # Message to user
         flash(f"{quote['name']} sold for the unit price of ${quote['price']}. Received ${soldTotal}")
