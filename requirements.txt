@@ -14,7 +14,7 @@ Mako==1.2.4
 MarkupSafe==2.1.2
 PyMySQL==1.0.3
 python-dotenv==1.0.0
-requests==2.31.0
+requests==2.32.4
 SQLAlchemy==1.4.46
 sqlparse==0.4.4
 termcolor==2.2.0
