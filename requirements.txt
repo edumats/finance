@@ -19,5 +19,5 @@ SQLAlchemy==1.4.46
 sqlparse==0.4.4
 termcolor==2.2.0
 typing_extensions==4.5.0
-urllib3==1.26.15
+urllib3==2.6.3
 Werkzeug==2.2.3
