@@ -16,7 +16,7 @@ PyMySQL==1.0.3
 python-dotenv==1.0.0
 requests==2.31.0
 SQLAlchemy==1.4.46
-sqlparse==0.4.4
+sqlparse==0.5.4
 termcolor==2.2.0
 typing_extensions==4.5.0
 urllib3==1.26.15
